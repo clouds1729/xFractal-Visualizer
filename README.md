@@ -1,65 +1,96 @@
-# Mandelbrot Set Visualizer
+# xFractal-Visualizer
 
-The Mandelbrot Set Visualizer is a C++ program that uses the SDL (Simple DirectMedia Layer) library to render the Mandelbrot fractal set. The program allows users to zoom in and out, as well as pan around the fractal, providing an interactive way to explore this fascinating mathematical concept.
+An interactive Mandelbrot fractal visualizer written in C++ with SDL2.
 
-## Features
+## Highlights
 
-1. **Mandelbrot Set Visualization**: The program calculates and renders the Mandelbrot set, using a color palette to represent the number of iterations required for each point.
-2. **Zoom In/Out**: Users can zoom in and out of the fractal by clicking on the corresponding buttons in the top-left corner of the window.
-3. **Panning**: Users can pan around the fractal by clicking on the corresponding buttons in the bottom-left corner of the window.
-4. **Real-time Updates**: The program updates the fractal visualization in real-time as the user interacts with the window.
+- Real-time Mandelbrot rendering.
+- Mouse-centered zoom (wheel, left-click zoom in, right-click zoom out).
+- Keyboard and arrow-key panning controls.
+- Quick view reset and BMP screenshot export.
 
-## Requirements
+## Controls
 
-To run this program, you will need the following:
+- **Mouse wheel up / Left click**: Zoom in toward cursor.
+- **Mouse wheel down / Right click**: Zoom out from cursor.
+- **Arrow keys**: Pan view.
+- **R**: Reset to default view.
+- **S**: Save screenshot as `screenshot_<n>.bmp` in the working directory.
+- **Esc**: Quit.
 
-- C++ compiler (e.g., GCC, Clang)
-- SDL2 library installed on your system
+## Build (CMake)
 
-## How to Build and Run
+This project now supports a standard CMake workflow.
 
-1. Clone the repository:
-   ```
-   git clone https://github.com/your-username/mandelbrot-visualizer.git
-   ```
+### Linux (Ubuntu/Debian example)
 
-2. Navigate to the project directory:
-   ```
-   cd mandelbrot-visualizer
-   ```
+```bash
+sudo apt update
+sudo apt install -y cmake g++ libsdl2-dev
+cmake -S . -B build
+cmake --build build
+./build/xfractal_visualizer
+```
 
-3. Compile the program:
-   ```
-   g++ -o mandelbrot main.cpp -lSDL2
-   ```
+### macOS (Homebrew)
 
-4. Run the program:
-   ```
-   ./mandelbrot
-   ```
+```bash
+brew install cmake sdl2
+cmake -S . -B build
+cmake --build build
+./build/xfractal_visualizer
+```
 
-   The Mandelbrot Set Visualizer window should now be displayed.
+### Windows
 
-## Usage
+Option A: **Visual Studio + CMake**
 
-1. **Zoom In/Out**: Click the "+" and "-" buttons in the top-left corner of the window to zoom in and out of the fractal.
-2. **Panning**: Click the arrow buttons in the bottom-left corner of the window to pan around the fractal.
-3. **Quit**: Press the "X" button in the top-right corner of the window to quit the program.
+1. Install Visual Studio (Desktop development with C++).
+2. Install SDL2 development files (or via a package manager such as vcpkg).
+3. Configure and build:
 
-## Code Overview
+```powershell
+cmake -S . -B build -A x64
+cmake --build build --config Release
+.\build\Release\xfractal_visualizer.exe
+```
 
-The main components of the code are:
+Option B: **vcpkg** example
 
-1. **SDL Initialization**: The program initializes the SDL library, creates a window, and a renderer.
-2. **Mandelbrot Set Calculation**: The `mandelbrot` function calculates the number of iterations required for a given point in the complex plane to escape the Mandelbrot set.
-3. **Color Conversion**: The `hueToRGB` function converts a hue value to an RGB color.
-4. **Mapping Functions**: The `map` function maps a value from one range to another.
-5. **Main Loop**: The program's main loop handles user events (e.g., zooming, panning) and updates the fractal visualization accordingly.
+```powershell
+vcpkg install sdl2:x64-windows
+cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config Release
+```
 
-## Contribution
+## Project Structure
 
-If you find any issues or have suggestions for improvements, please feel free to open an issue or submit a pull request. Contributions are always welcome!
+```text
+.
+├── CMakeLists.txt          # Cross-platform CMake build file
+├── README.md               # Project documentation
+├── LICENSE                 # MIT license
+├── SDLP1.sln               # Existing Visual Studio solution
+└── SDLP1/
+    ├── main.cpp            # SDL2 app + Mandelbrot rendering and interaction logic
+    ├── SDLP1.vcxproj       # Existing Visual Studio project
+    └── *.dll               # Runtime DLLs currently tracked in repo
+```
+
+## Roadmap
+
+- [ ] Improve color palettes and smooth coloring.
+- [ ] Add frame-time/FPS overlay and optional HUD.
+- [ ] Add resolution/window-size options.
+- [ ] Add Julia set mode.
+- [ ] Add image export formats beyond BMP (PNG).
+- [ ] Add CI for multi-platform build verification.
+
+## Notes
+
+- The fractal computation is currently single-threaded.
+- Screenshot output uses SDL BMP writing for portability.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+MIT — see [LICENSE](LICENSE).
