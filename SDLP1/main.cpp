@@ -1,125 +1,138 @@
 #include <SDL.h>
+
+#include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 #define WIDTH 800
 #define HEIGHT 600
-
-const int MAX_ITER = 1000;
 
 constexpr double X_MIN = -2.5;
 constexpr double X_MAX = 1.0;
 constexpr double Y_MIN = -1.0;
 constexpr double Y_MAX = 1.0;
 
-constexpr double ZOOM_FACTOR_IN = 1.1;
+constexpr double ZOOM_FACTOR_IN = 1.12;
 constexpr double ZOOM_FACTOR_OUT = 1.0 / ZOOM_FACTOR_IN;
-constexpr double PAN_STEP = 0.1;
+constexpr double PAN_STEP = 0.08;
 
-double map(double value, double in_min, double in_max, double out_min, double out_max) {
-    return (value - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+struct ViewState {
+    double zoom = 1.0;
+    double centerX = (X_MIN + X_MAX) * 0.5;
+    double centerY = (Y_MIN + Y_MAX) * 0.5;
+};
+
+enum class PaletteMode { Classic = 0, Fire = 1, Ice = 2 };
+
+static double mapValue(double value, double inMin, double inMax, double outMin, double outMax) {
+    return (value - inMin) * (outMax - outMin) / (inMax - inMin) + outMin;
 }
 
-SDL_Color hueToRGB(double hue) {
-    double h = hue / 60.0;
-    int i = static_cast<int>(h);
-    double f = h - i;
-    double p = 255 * (1.0 - 1.0);
-    double q = 255 * (1.0 - f);
-    double t = 255 * (1.0 - (1.0 - f));
+static double viewportWidth(const ViewState& view) { return (X_MAX - X_MIN) / view.zoom; }
+static double viewportHeight(const ViewState& view) { return (Y_MAX - Y_MIN) / view.zoom; }
 
-    switch (i) {
-    case 0:
-        return {255, static_cast<Uint8>(t), 0, 255};
-    case 1:
-        return {static_cast<Uint8>(q), 255, 0, 255};
-    case 2:
-        return {0, 255, static_cast<Uint8>(t), 255};
-    case 3:
-        return {0, static_cast<Uint8>(q), 255, 255};
-    case 4:
-        return {static_cast<Uint8>(t), 0, 255, 255};
-    default:
-        return {255, 0, static_cast<Uint8>(q), 255};
+static double screenToComplexX(int x, const ViewState& view) {
+    const double halfW = viewportWidth(view) * 0.5;
+    return mapValue(static_cast<double>(x), 0.0, static_cast<double>(WIDTH), view.centerX - halfW, view.centerX + halfW);
+}
+
+static double screenToComplexY(int y, const ViewState& view) {
+    const double halfH = viewportHeight(view) * 0.5;
+    return mapValue(static_cast<double>(y), 0.0, static_cast<double>(HEIGHT), view.centerY - halfH, view.centerY + halfH);
+}
+
+static void applyCursorZoom(int mouseX, int mouseY, double factor, ViewState& view) {
+    const double beforeX = screenToComplexX(mouseX, view);
+    const double beforeY = screenToComplexY(mouseY, view);
+
+    view.zoom *= factor;
+
+    const double afterX = screenToComplexX(mouseX, view);
+    const double afterY = screenToComplexY(mouseY, view);
+
+    view.centerX += beforeX - afterX;
+    view.centerY += beforeY - afterY;
+}
+
+static int adaptiveIterations(double zoom, int manualOffset) {
+    const double logZoom = std::max(0.0, std::log10(zoom));
+    const int base = 120 + static_cast<int>(logZoom * 90.0);
+    return std::clamp(base + manualOffset, 50, 4000);
+}
+
+static SDL_Color paletteColor(double t, PaletteMode palette) {
+    t = std::clamp(t, 0.0, 1.0);
+    if (palette == PaletteMode::Classic) {
+        const Uint8 r = static_cast<Uint8>(9 * (1 - t) * t * t * t * 255);
+        const Uint8 g = static_cast<Uint8>(15 * (1 - t) * (1 - t) * t * t * 255);
+        const Uint8 b = static_cast<Uint8>(8.5 * (1 - t) * (1 - t) * (1 - t) * t * 255);
+        return {r, g, b, 255};
     }
+    if (palette == PaletteMode::Fire) {
+        return {static_cast<Uint8>(255 * t), static_cast<Uint8>(180 * t * t), static_cast<Uint8>(80 * (1 - t)), 255};
+    }
+    return {static_cast<Uint8>(100 * (1 - t)), static_cast<Uint8>(180 * t), static_cast<Uint8>(255 * t), 255};
 }
 
-int mandelbrot(double x0, double y0) {
-    double x = 0.0, y = 0.0;
+static double mandelbrotSmooth(double x0, double y0, int maxIterations) {
+    double x = 0.0;
+    double y = 0.0;
     int iter = 0;
-    while (x * x + y * y < 4 && iter < MAX_ITER) {
-        double xtemp = x * x - y * y + x0;
-        y = 2 * x * y + y0;
-        x = xtemp;
-        iter++;
+    while (x * x + y * y <= 4.0 && iter < maxIterations) {
+        const double xt = x * x - y * y + x0;
+        y = 2.0 * x * y + y0;
+        x = xt;
+        ++iter;
     }
-    return iter;
+    if (iter == maxIterations) {
+        return static_cast<double>(maxIterations);
+    }
+    const double mag2 = x * x + y * y;
+    const double nu = iter + 1.0 - std::log2(std::log2(std::max(mag2, 1e-12)));
+    return std::clamp(nu, 0.0, static_cast<double>(maxIterations));
 }
 
-double screenToComplexX(int x, double zoom, double offsetX) {
-    return map(x, 0, WIDTH, X_MIN / zoom + offsetX, X_MAX / zoom + offsetX);
+static const char* paletteName(PaletteMode p) {
+    switch (p) {
+        case PaletteMode::Classic: return "classic";
+        case PaletteMode::Fire: return "fire";
+        case PaletteMode::Ice: return "ice";
+    }
+    return "unknown";
 }
 
-double screenToComplexY(int y, double zoom, double offsetY) {
-    return map(y, 0, HEIGHT, Y_MIN / zoom + offsetY, Y_MAX / zoom + offsetY);
-}
-
-void applyCursorZoom(int mouseX, int mouseY, double zoomFactor, double& zoom, double& offsetX, double& offsetY) {
-    const double beforeX = screenToComplexX(mouseX, zoom, offsetX);
-    const double beforeY = screenToComplexY(mouseY, zoom, offsetY);
-
-    zoom *= zoomFactor;
-
-    const double mappedX = screenToComplexX(mouseX, zoom, offsetX);
-    const double mappedY = screenToComplexY(mouseY, zoom, offsetY);
-
-    offsetX += beforeX - mappedX;
-    offsetY += beforeY - mappedY;
-}
-
-bool saveScreenshot(SDL_Renderer* renderer, const std::string& filename) {
+static bool saveScreenshot(SDL_Renderer* renderer, const std::string& filename) {
     SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, WIDTH, HEIGHT, 32, SDL_PIXELFORMAT_RGBA32);
-    if (!surface) {
-        return false;
-    }
-
-    const int readPixelsResult = SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_RGBA32, surface->pixels, surface->pitch);
-    if (readPixelsResult != 0) {
+    if (!surface) return false;
+    const int readRes = SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_RGBA32, surface->pixels, surface->pitch);
+    if (readRes != 0) {
         SDL_FreeSurface(surface);
         return false;
     }
-
-    const int saveResult = SDL_SaveBMP(surface, filename.c_str());
+    const int saveRes = SDL_SaveBMP(surface, filename.c_str());
     SDL_FreeSurface(surface);
-    return saveResult == 0;
+    return saveRes == 0;
 }
 
 int main(int argc, char* argv[]) {
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        std::cout << "SDL_Init Error: " << SDL_GetError() << std::endl;
-        return 1;
-    }
-
-    SDL_Window* win = SDL_CreateWindow("Mandelbrot Set", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIDTH, HEIGHT, 0);
-    if (!win) {
-        std::cout << "SDL_CreateWindow Error: " << SDL_GetError() << std::endl;
-        SDL_Quit();
-        return 1;
-    }
-
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) return 1;
+    SDL_Window* win = SDL_CreateWindow("Mandelbrot Explorer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIDTH, HEIGHT, 0);
+    if (!win) return 1;
     SDL_Renderer* renderer = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
-    if (!renderer) {
-        std::cout << "SDL_CreateRenderer Error: " << SDL_GetError() << std::endl;
-        SDL_DestroyWindow(win);
-        SDL_Quit();
-        return 1;
-    }
+    if (!renderer) return 1;
 
-    double zoom = 1.0;
-    double offsetX = 0.0;
-    double offsetY = 0.0;
+    ViewState view;
+    PaletteMode palette = PaletteMode::Classic;
+    int manualIterationOffset = 0;
     int screenshotIndex = 1;
+    bool captureScreenshot = false;
+    bool viewDirty = true;
+    bool dragging = false;
+    int dragLastX = 0;
+    int dragLastY = 0;
 
     bool quit = false;
     SDL_Event event;
@@ -129,79 +142,89 @@ int main(int argc, char* argv[]) {
                 quit = true;
             } else if (event.type == SDL_KEYDOWN) {
                 switch (event.key.keysym.sym) {
-                case SDLK_ESCAPE:
-                    quit = true;
-                    break;
-                case SDLK_r:
-                    zoom = 1.0;
-                    offsetX = 0.0;
-                    offsetY = 0.0;
-                    break;
-                case SDLK_s: {
-                    const std::string filename = "screenshot_" + std::to_string(screenshotIndex++) + ".bmp";
-                    if (!saveScreenshot(renderer, filename)) {
-                        std::cout << "Failed to save screenshot: " << SDL_GetError() << std::endl;
-                    }
-                    break;
-                }
-                case SDLK_LEFT:
-                    offsetX -= PAN_STEP / zoom;
-                    break;
-                case SDLK_RIGHT:
-                    offsetX += PAN_STEP / zoom;
-                    break;
-                case SDLK_UP:
-                    offsetY -= PAN_STEP / zoom;
-                    break;
-                case SDLK_DOWN:
-                    offsetY += PAN_STEP / zoom;
-                    break;
-                default:
-                    break;
+                    case SDLK_ESCAPE: quit = true; break;
+                    case SDLK_r: view = ViewState{}; manualIterationOffset = 0; viewDirty = true; break;
+                    case SDLK_s: captureScreenshot = true; break;
+                    case SDLK_c: palette = static_cast<PaletteMode>((static_cast<int>(palette) + 1) % 3); viewDirty = true; break;
+                    case SDLK_LEFT: view.centerX -= PAN_STEP / view.zoom; viewDirty = true; break;
+                    case SDLK_RIGHT: view.centerX += PAN_STEP / view.zoom; viewDirty = true; break;
+                    case SDLK_UP: view.centerY -= PAN_STEP / view.zoom; viewDirty = true; break;
+                    case SDLK_DOWN: view.centerY += PAN_STEP / view.zoom; viewDirty = true; break;
+                    case SDLK_LEFTBRACKET: manualIterationOffset -= 30; viewDirty = true; break;
+                    case SDLK_RIGHTBRACKET: manualIterationOffset += 30; viewDirty = true; break;
+                    case SDLK_EQUALS:
+                    case SDLK_PLUS: applyCursorZoom(WIDTH / 2, HEIGHT / 2, ZOOM_FACTOR_IN, view); viewDirty = true; break;
+                    case SDLK_MINUS: applyCursorZoom(WIDTH / 2, HEIGHT / 2, ZOOM_FACTOR_OUT, view); viewDirty = true; break;
+                    default: break;
                 }
             } else if (event.type == SDL_MOUSEWHEEL) {
-                int mouseX = 0;
-                int mouseY = 0;
-                SDL_GetMouseState(&mouseX, &mouseY);
-                if (event.wheel.y > 0) {
-                    applyCursorZoom(mouseX, mouseY, ZOOM_FACTOR_IN, zoom, offsetX, offsetY);
-                } else if (event.wheel.y < 0) {
-                    applyCursorZoom(mouseX, mouseY, ZOOM_FACTOR_OUT, zoom, offsetX, offsetY);
-                }
-            } else if (event.type == SDL_MOUSEBUTTONDOWN) {
-                int x = event.button.x;
-                int y = event.button.y;
-
-                if (event.button.button == SDL_BUTTON_LEFT) {
-                    applyCursorZoom(x, y, ZOOM_FACTOR_IN, zoom, offsetX, offsetY);
-                } else if (event.button.button == SDL_BUTTON_RIGHT) {
-                    applyCursorZoom(x, y, ZOOM_FACTOR_OUT, zoom, offsetX, offsetY);
-                }
+                int mx = 0, my = 0;
+                SDL_GetMouseState(&mx, &my);
+                if (event.wheel.y > 0) applyCursorZoom(mx, my, ZOOM_FACTOR_IN, view);
+                if (event.wheel.y < 0) applyCursorZoom(mx, my, ZOOM_FACTOR_OUT, view);
+                viewDirty = true;
+            } else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
+                dragging = true;
+                dragLastX = event.button.x;
+                dragLastY = event.button.y;
+            } else if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
+                dragging = false;
+            } else if (event.type == SDL_MOUSEMOTION && dragging) {
+                const int dx = event.motion.x - dragLastX;
+                const int dy = event.motion.y - dragLastY;
+                view.centerX -= dx * viewportWidth(view) / WIDTH;
+                view.centerY -= dy * viewportHeight(view) / HEIGHT;
+                dragLastX = event.motion.x;
+                dragLastY = event.motion.y;
+                viewDirty = true;
             }
         }
 
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-        SDL_RenderClear(renderer);
-
-        for (int y = 0; y < HEIGHT; y++) {
-            for (int x = 0; x < WIDTH; x++) {
-                double x0 = screenToComplexX(x, zoom, offsetX);
-                double y0 = screenToComplexY(y, zoom, offsetY);
-
-                int color = mandelbrot(x0, y0);
-                double hue = fmod(color * 10.0, 360.0);
-                SDL_Color rgb = hueToRGB(hue);
-                SDL_SetRenderDrawColor(renderer, rgb.r, rgb.g, rgb.b, 255);
-                SDL_RenderDrawPoint(renderer, x, y);
+        if (viewDirty) {
+            const int maxIterations = adaptiveIterations(view.zoom, manualIterationOffset);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderClear(renderer);
+            for (int py = 0; py < HEIGHT; ++py) {
+                for (int px = 0; px < WIDTH; ++px) {
+                    const double x0 = screenToComplexX(px, view);
+                    const double y0 = screenToComplexY(py, view);
+                    const double smoothIter = mandelbrotSmooth(x0, y0, maxIterations);
+                    if (smoothIter >= maxIterations) {
+                        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                    } else {
+                        const double t = smoothIter / maxIterations;
+                        const SDL_Color c = paletteColor(t, palette);
+                        SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 255);
+                    }
+                    SDL_RenderDrawPoint(renderer, px, py);
+                }
             }
-        }
 
-        SDL_RenderPresent(renderer);
+            if (captureScreenshot) {
+                const std::string filename = "screenshot_" + std::to_string(screenshotIndex++) + ".bmp";
+                if (!saveScreenshot(renderer, filename)) {
+                    std::cout << "Failed screenshot: " << SDL_GetError() << std::endl;
+                }
+                captureScreenshot = false;
+            }
+
+            SDL_RenderPresent(renderer);
+
+            std::ostringstream title;
+            title << std::fixed << std::setprecision(6)
+                  << "Mandelbrot | zoom=" << view.zoom
+                  << " center=(" << view.centerX << "," << view.centerY << ")"
+                  << " iter=" << maxIterations
+                  << " palette=" << paletteName(palette)
+                  << " | wheel zoom, drag/arrows pan, R reset, S shot, [ ] iter, C palette, Esc quit";
+            SDL_SetWindowTitle(win, title.str().c_str());
+            viewDirty = false;
+        }
+        SDL_Delay(1);
     }
 
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(win);
     SDL_Quit();
-
     return 0;
 }
