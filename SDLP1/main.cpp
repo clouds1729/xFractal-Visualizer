@@ -6,6 +6,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #define WIDTH 800
 #define HEIGHT 600
@@ -28,7 +29,15 @@ struct ViewState {
     Precision centerY = (Y_MIN + Y_MAX) * static_cast<Precision>(0.5);
 };
 
-enum class PaletteMode { Classic = 0, Fire = 1, Ice = 2 };
+enum class PaletteMode { Fire = 0, OceanIce = 1, Neon = 2, Grayscale = 3, Rainbow = 4 };
+
+enum class ButtonAction { ZoomIn, ZoomOut, PanLeft, PanRight, PanUp, PanDown, Reset, DetailUp, DetailDown, PaletteNext };
+
+struct OverlayButton {
+    SDL_Rect rect{};
+    ButtonAction action;
+    const char* label;
+};
 
 static Precision mapValue(Precision value, Precision inMin, Precision inMax, Precision outMin, Precision outMax) {
     return (value - inMin) * (outMax - outMin) / (inMax - inMin) + outMin;
@@ -66,18 +75,48 @@ static int adaptiveIterations(Precision zoom, int manualOffset) {
     return std::clamp(base + manualOffset, 50, 4000);
 }
 
-static SDL_Color paletteColor(double t, PaletteMode palette) {
+static Uint8 adjustContrast(double value, double intensity) {
+    const double centered = (value - 127.5) * intensity + 127.5;
+    return static_cast<Uint8>(std::clamp(centered, 0.0, 255.0));
+}
+
+static SDL_Color paletteColor(double t, PaletteMode palette, double intensity, bool reversePalette) {
     t = std::clamp(t, 0.0, 1.0);
-    if (palette == PaletteMode::Classic) {
-        const Uint8 r = static_cast<Uint8>(9 * (1 - t) * t * t * t * 255);
-        const Uint8 g = static_cast<Uint8>(15 * (1 - t) * (1 - t) * t * t * 255);
-        const Uint8 b = static_cast<Uint8>(8.5 * (1 - t) * (1 - t) * (1 - t) * t * 255);
-        return {r, g, b, 255};
+    if (reversePalette) t = 1.0 - t;
+
+    double r = 0.0, g = 0.0, b = 0.0;
+    switch (palette) {
+        case PaletteMode::Fire:
+            r = 255.0 * std::pow(t, 0.65);
+            g = 220.0 * std::pow(t, 1.2);
+            b = 90.0 * std::pow(1.0 - t, 2.2);
+            break;
+        case PaletteMode::OceanIce:
+            r = 40.0 + 70.0 * t;
+            g = 80.0 + 150.0 * std::pow(t, 0.9);
+            b = 120.0 + 135.0 * std::pow(t, 0.45);
+            break;
+        case PaletteMode::Neon:
+            r = 127.0 + 127.0 * std::sin(6.28318 * (t + 0.00));
+            g = 127.0 + 127.0 * std::sin(6.28318 * (t + 0.33));
+            b = 127.0 + 127.0 * std::sin(6.28318 * (t + 0.66));
+            break;
+        case PaletteMode::Grayscale:
+            r = g = b = 255.0 * t;
+            break;
+        case PaletteMode::Rainbow:
+            r = 127.0 + 127.0 * std::sin(6.28318 * (t + 0.00));
+            g = 127.0 + 127.0 * std::sin(6.28318 * (t + 0.25));
+            b = 127.0 + 127.0 * std::sin(6.28318 * (t + 0.50));
+            break;
     }
-    if (palette == PaletteMode::Fire) {
-        return {static_cast<Uint8>(255 * t), static_cast<Uint8>(180 * t * t), static_cast<Uint8>(80 * (1 - t)), 255};
-    }
-    return {static_cast<Uint8>(100 * (1 - t)), static_cast<Uint8>(180 * t), static_cast<Uint8>(255 * t), 255};
+
+    return {
+        adjustContrast(r, intensity),
+        adjustContrast(g, intensity),
+        adjustContrast(b, intensity),
+        255
+    };
 }
 
 static Precision mandelbrotSmooth(Precision x0, Precision y0, int maxIterations) {
@@ -100,9 +139,11 @@ static Precision mandelbrotSmooth(Precision x0, Precision y0, int maxIterations)
 
 static const char* paletteName(PaletteMode p) {
     switch (p) {
-        case PaletteMode::Classic: return "classic";
-        case PaletteMode::Fire: return "fire";
-        case PaletteMode::Ice: return "ice";
+        case PaletteMode::Fire: return "fire/lava";
+        case PaletteMode::OceanIce: return "ocean/ice";
+        case PaletteMode::Neon: return "neon";
+        case PaletteMode::Grayscale: return "grayscale";
+        case PaletteMode::Rainbow: return "rainbow";
     }
     return "unknown";
 }
@@ -120,7 +161,100 @@ static bool saveScreenshot(SDL_Renderer* renderer, const std::string& filename) 
     return saveRes == 0;
 }
 
+static std::vector<OverlayButton> buildOverlayButtons() {
+    constexpr int panelX = WIDTH - 138;
+    constexpr int panelY = 12;
+    constexpr int buttonW = 124;
+    constexpr int buttonH = 28;
+    constexpr int gap = 6;
+
+    std::vector<OverlayButton> buttons;
+    const ButtonAction actions[] = {ButtonAction::ZoomIn, ButtonAction::ZoomOut, ButtonAction::PanLeft, ButtonAction::PanRight, ButtonAction::PanUp, ButtonAction::PanDown,
+                                    ButtonAction::Reset, ButtonAction::DetailUp, ButtonAction::DetailDown, ButtonAction::PaletteNext};
+    const char* labels[] = {"Zoom +", "Zoom -", "Left", "Right", "Up", "Down", "Reset", "Detail +", "Detail -", "Palette"};
+
+    for (int i = 0; i < 10; ++i) {
+        buttons.push_back({SDL_Rect{panelX, panelY + i * (buttonH + gap), buttonW, buttonH}, actions[i], labels[i]});
+    }
+    return buttons;
+}
+
+static void drawButtonIcon(SDL_Renderer* renderer, const SDL_Rect& rect, ButtonAction action) {
+    const int cx = rect.x + rect.w / 2;
+    const int cy = rect.y + rect.h / 2;
+    SDL_SetRenderDrawColor(renderer, 240, 240, 240, 255);
+    switch (action) {
+        case ButtonAction::ZoomIn:
+            SDL_RenderDrawLine(renderer, cx - 7, cy, cx + 7, cy);
+            SDL_RenderDrawLine(renderer, cx, cy - 7, cx, cy + 7);
+            break;
+        case ButtonAction::ZoomOut:
+            SDL_RenderDrawLine(renderer, cx - 7, cy, cx + 7, cy);
+            break;
+        case ButtonAction::PanLeft:
+            SDL_RenderDrawLine(renderer, cx + 7, cy - 7, cx - 7, cy);
+            SDL_RenderDrawLine(renderer, cx + 7, cy + 7, cx - 7, cy);
+            break;
+        case ButtonAction::PanRight:
+            SDL_RenderDrawLine(renderer, cx - 7, cy - 7, cx + 7, cy);
+            SDL_RenderDrawLine(renderer, cx - 7, cy + 7, cx + 7, cy);
+            break;
+        case ButtonAction::PanUp:
+            SDL_RenderDrawLine(renderer, cx - 7, cy + 7, cx, cy - 7);
+            SDL_RenderDrawLine(renderer, cx + 7, cy + 7, cx, cy - 7);
+            break;
+        case ButtonAction::PanDown:
+            SDL_RenderDrawLine(renderer, cx - 7, cy - 7, cx, cy + 7);
+            SDL_RenderDrawLine(renderer, cx + 7, cy - 7, cx, cy + 7);
+            break;
+        case ButtonAction::Reset:
+            {
+                SDL_Rect square{cx - 7, cy - 7, 14, 14};
+                SDL_RenderDrawRect(renderer, &square);
+            }
+            break;
+        case ButtonAction::DetailUp:
+            SDL_RenderDrawLine(renderer, cx - 8, cy + 5, cx, cy - 5);
+            SDL_RenderDrawLine(renderer, cx, cy - 5, cx + 8, cy + 5);
+            SDL_RenderDrawLine(renderer, cx - 5, cy + 5, cx + 5, cy + 5);
+            break;
+        case ButtonAction::DetailDown:
+            SDL_RenderDrawLine(renderer, cx - 8, cy - 5, cx, cy + 5);
+            SDL_RenderDrawLine(renderer, cx, cy + 5, cx + 8, cy - 5);
+            SDL_RenderDrawLine(renderer, cx - 5, cy - 5, cx + 5, cy - 5);
+            break;
+        case ButtonAction::PaletteNext:
+            SDL_RenderDrawLine(renderer, cx - 8, cy, cx + 8, cy);
+            SDL_RenderDrawLine(renderer, cx + 8, cy, cx + 4, cy - 4);
+            SDL_RenderDrawLine(renderer, cx + 8, cy, cx + 4, cy + 4);
+            break;
+    }
+}
+
+static bool applyAction(ButtonAction action, ViewState& view, int& manualIterationOffset, PaletteMode& palette, bool& reversePalette, bool& captureScreenshot, double& colorIntensity) {
+    switch (action) {
+        case ButtonAction::ZoomIn: applyCursorZoom(WIDTH / 2, HEIGHT / 2, ZOOM_FACTOR_IN, view); return true;
+        case ButtonAction::ZoomOut: applyCursorZoom(WIDTH / 2, HEIGHT / 2, ZOOM_FACTOR_OUT, view); return true;
+        case ButtonAction::PanLeft: view.centerX -= PAN_STEP / view.zoom; return true;
+        case ButtonAction::PanRight: view.centerX += PAN_STEP / view.zoom; return true;
+        case ButtonAction::PanUp: view.centerY -= PAN_STEP / view.zoom; return true;
+        case ButtonAction::PanDown: view.centerY += PAN_STEP / view.zoom; return true;
+        case ButtonAction::Reset: view = ViewState{}; manualIterationOffset = 0; return true;
+        case ButtonAction::DetailUp: manualIterationOffset += 30; return true;
+        case ButtonAction::DetailDown: manualIterationOffset -= 30; return true;
+        case ButtonAction::PaletteNext:
+            palette = static_cast<PaletteMode>((static_cast<int>(palette) + 1) % 5);
+            return true;
+    }
+    (void)reversePalette;
+    (void)captureScreenshot;
+    (void)colorIntensity;
+    return false;
+}
+
 int main(int argc, char* argv[]) {
+    (void)argc;
+    (void)argv;
     if (SDL_Init(SDL_INIT_VIDEO) < 0) return 1;
     SDL_Window* win = SDL_CreateWindow("Mandelbrot Explorer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIDTH, HEIGHT, 0);
     if (!win) return 1;
@@ -128,14 +262,18 @@ int main(int argc, char* argv[]) {
     if (!renderer) return 1;
 
     ViewState view;
-    PaletteMode palette = PaletteMode::Classic;
+    PaletteMode palette = PaletteMode::Fire;
     int manualIterationOffset = 0;
     int screenshotIndex = 1;
     bool captureScreenshot = false;
+    bool reversePalette = false;
+    double colorIntensity = 1.0;
     bool viewDirty = true;
     bool dragging = false;
     int dragLastX = 0;
     int dragLastY = 0;
+    const SDL_Color insideColor{0, 0, 0, 255};
+    const std::vector<OverlayButton> buttons = buildOverlayButtons();
 
     bool quit = false;
     SDL_Event event;
@@ -148,7 +286,10 @@ int main(int argc, char* argv[]) {
                     case SDLK_ESCAPE: quit = true; break;
                     case SDLK_r: view = ViewState{}; manualIterationOffset = 0; viewDirty = true; break;
                     case SDLK_s: captureScreenshot = true; break;
-                    case SDLK_c: palette = static_cast<PaletteMode>((static_cast<int>(palette) + 1) % 3); viewDirty = true; break;
+                    case SDLK_c: palette = static_cast<PaletteMode>((static_cast<int>(palette) + 1) % 5); viewDirty = true; break;
+                    case SDLK_v: reversePalette = !reversePalette; viewDirty = true; break;
+                    case SDLK_COMMA: colorIntensity = std::max(0.40, colorIntensity - 0.10); viewDirty = true; break;
+                    case SDLK_PERIOD: colorIntensity = std::min(3.00, colorIntensity + 0.10); viewDirty = true; break;
                     case SDLK_LEFT: view.centerX -= PAN_STEP / view.zoom; viewDirty = true; break;
                     case SDLK_RIGHT: view.centerX += PAN_STEP / view.zoom; viewDirty = true; break;
                     case SDLK_UP: view.centerY -= PAN_STEP / view.zoom; viewDirty = true; break;
@@ -167,9 +308,19 @@ int main(int argc, char* argv[]) {
                 if (event.wheel.y < 0) applyCursorZoom(mx, my, ZOOM_FACTOR_OUT, view);
                 viewDirty = true;
             } else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
-                dragging = true;
-                dragLastX = event.button.x;
-                dragLastY = event.button.y;
+                bool clickedButton = false;
+                for (const OverlayButton& button : buttons) {
+                    if (event.button.x >= button.rect.x && event.button.x < button.rect.x + button.rect.w && event.button.y >= button.rect.y && event.button.y < button.rect.y + button.rect.h) {
+                        viewDirty = applyAction(button.action, view, manualIterationOffset, palette, reversePalette, captureScreenshot, colorIntensity) || viewDirty;
+                        clickedButton = true;
+                        break;
+                    }
+                }
+                if (!clickedButton) {
+                    dragging = true;
+                    dragLastX = event.button.x;
+                    dragLastY = event.button.y;
+                }
             } else if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
                 dragging = false;
             } else if (event.type == SDL_MOUSEMOTION && dragging) {
@@ -193,14 +344,24 @@ int main(int argc, char* argv[]) {
                     const Precision y0 = screenToComplexY(py, view);
                     const Precision smoothIter = mandelbrotSmooth(x0, y0, maxIterations);
                     if (smoothIter >= maxIterations) {
-                        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                        SDL_SetRenderDrawColor(renderer, insideColor.r, insideColor.g, insideColor.b, 255);
                     } else {
                         const double t = static_cast<double>(smoothIter / static_cast<Precision>(maxIterations));
-                        const SDL_Color c = paletteColor(t, palette);
+                        const SDL_Color c = paletteColor(t, palette, colorIntensity, reversePalette);
                         SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 255);
                     }
                     SDL_RenderDrawPoint(renderer, px, py);
                 }
+            }
+
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 20, 20, 20, 180);
+            const SDL_Rect panelRect{WIDTH - 144, 8, 136, 352};
+            SDL_RenderFillRect(renderer, &panelRect);
+            for (const OverlayButton& button : buttons) {
+                SDL_SetRenderDrawColor(renderer, 255, 255, 255, 220);
+                SDL_RenderDrawRect(renderer, &button.rect);
+                drawButtonIcon(renderer, button.rect, button.action);
             }
 
             if (captureScreenshot) {
@@ -217,14 +378,18 @@ int main(int argc, char* argv[]) {
 
             std::ostringstream title;
             title << std::fixed << std::setprecision(6)
-                  << "Mandelbrot | zoom=" << view.zoom
+                  << "Mandelbrot | palette=" << paletteName(palette)
+                  << (reversePalette ? " (rev)" : "")
+                  << " contrast=" << std::setprecision(2) << colorIntensity
+                  << std::setprecision(6)
+                  << " zoom=" << view.zoom
                   << " center=(" << view.centerX << "," << view.centerY << ")"
                   << " iter=" << maxIterations
-                  << " palette=" << paletteName(palette);
+                  << " | panel: + - < > ^ v [] C";
             if (doublePrecisionLimitNear) {
                 title << " WARNING: double precision limit near";
             }
-            title << " | wheel zoom, drag/arrows pan, R reset, S shot, [ ] iter, C palette, Esc quit";
+            title << " | wheel zoom, drag/arrows pan, R reset, S shot, [ ] iter, C palette, V reverse, ,/. contrast";
             SDL_SetWindowTitle(win, title.str().c_str());
             viewDirty = false;
         }
