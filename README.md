@@ -4,6 +4,8 @@ Interactive Mandelbrot explorer built with C++ and SDL2.
 ## Image
 <img width="2424" height="1896" alt="image" src="https://github.com/user-attachments/assets/addd1bcb-098b-49fb-a954-3b42f1504bf0" />
 
+<img width="2410" height="1876" alt="image" src="https://github.com/user-attachments/assets/6d42f67f-15a7-4ee4-a6c0-2016fa9e004c" />
+
 
 ## Controls
 
