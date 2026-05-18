@@ -1,6 +1,9 @@
 # xFractal-Visualizer
 
 Interactive Mandelbrot explorer built with C++ and SDL2.
+## Image
+<img width="2424" height="1896" alt="image" src="https://github.com/user-attachments/assets/addd1bcb-098b-49fb-a954-3b42f1504bf0" />
+
 
 ## Controls
 
