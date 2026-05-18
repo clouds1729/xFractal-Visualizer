@@ -63,6 +63,18 @@ cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/build
 cmake --build build --config Release
 ```
 
+## Deep zoom limitations
+
+Current rendering uses `double` precision for pixel iteration and view coordinates. This is fast and simple, but at very deep zoom levels floating-point spacing becomes too coarse and neighboring pixels can map to nearly the same complex-plane value.
+
+To make this explicit, the app shows a window-title warning when zoom exceeds a conservative reliability threshold.
+
+### Precision tradeoffs
+
+- **Double precision (current):** fastest and easiest to maintain, but deep zoom eventually loses detail due to precision limits.
+- **Multiprecision everywhere (e.g., Boost.Multiprecision):** much deeper accurate zooms, but substantially slower per-pixel iteration.
+- **Perturbation / reference-orbit methods:** best path for extreme deep zoom; retain speed by combining high-precision reference math with mostly double-precision per-pixel deltas.
+
 ## Project Structure
 
 ```text
@@ -79,6 +91,7 @@ cmake --build build --config Release
 
 ## Roadmap
 
+- [ ] Add true deep zoom with multiprecision + perturbation rendering path.
 - [ ] Improve color palettes and smooth coloring.
 - [ ] Add frame-time/FPS overlay and optional HUD.
 - [ ] Add resolution/window-size options.
