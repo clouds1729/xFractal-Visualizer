@@ -10,56 +10,59 @@
 #define WIDTH 800
 #define HEIGHT 600
 
-constexpr double X_MIN = -2.5;
-constexpr double X_MAX = 1.0;
-constexpr double Y_MIN = -1.0;
-constexpr double Y_MAX = 1.0;
+using Precision = double;
 
-constexpr double ZOOM_FACTOR_IN = 1.12;
-constexpr double ZOOM_FACTOR_OUT = 1.0 / ZOOM_FACTOR_IN;
-constexpr double PAN_STEP = 0.08;
+constexpr Precision X_MIN = static_cast<Precision>(-2.5);
+constexpr Precision X_MAX = static_cast<Precision>(1.0);
+constexpr Precision Y_MIN = static_cast<Precision>(-1.0);
+constexpr Precision Y_MAX = static_cast<Precision>(1.0);
+
+constexpr Precision ZOOM_FACTOR_IN = static_cast<Precision>(1.12);
+constexpr Precision ZOOM_FACTOR_OUT = static_cast<Precision>(1.0) / ZOOM_FACTOR_IN;
+constexpr Precision PAN_STEP = static_cast<Precision>(0.08);
+constexpr Precision DOUBLE_WARNING_ZOOM = static_cast<Precision>(1e12);
 
 struct ViewState {
-    double zoom = 1.0;
-    double centerX = (X_MIN + X_MAX) * 0.5;
-    double centerY = (Y_MIN + Y_MAX) * 0.5;
+    Precision zoom = static_cast<Precision>(1.0);
+    Precision centerX = (X_MIN + X_MAX) * static_cast<Precision>(0.5);
+    Precision centerY = (Y_MIN + Y_MAX) * static_cast<Precision>(0.5);
 };
 
 enum class PaletteMode { Classic = 0, Fire = 1, Ice = 2 };
 
-static double mapValue(double value, double inMin, double inMax, double outMin, double outMax) {
+static Precision mapValue(Precision value, Precision inMin, Precision inMax, Precision outMin, Precision outMax) {
     return (value - inMin) * (outMax - outMin) / (inMax - inMin) + outMin;
 }
 
-static double viewportWidth(const ViewState& view) { return (X_MAX - X_MIN) / view.zoom; }
-static double viewportHeight(const ViewState& view) { return (Y_MAX - Y_MIN) / view.zoom; }
+static Precision viewportWidth(const ViewState& view) { return (X_MAX - X_MIN) / view.zoom; }
+static Precision viewportHeight(const ViewState& view) { return (Y_MAX - Y_MIN) / view.zoom; }
 
-static double screenToComplexX(int x, const ViewState& view) {
-    const double halfW = viewportWidth(view) * 0.5;
-    return mapValue(static_cast<double>(x), 0.0, static_cast<double>(WIDTH), view.centerX - halfW, view.centerX + halfW);
+static Precision screenToComplexX(int x, const ViewState& view) {
+    const Precision halfW = viewportWidth(view) * static_cast<Precision>(0.5);
+    return mapValue(static_cast<Precision>(x), static_cast<Precision>(0.0), static_cast<Precision>(WIDTH), view.centerX - halfW, view.centerX + halfW);
 }
 
-static double screenToComplexY(int y, const ViewState& view) {
-    const double halfH = viewportHeight(view) * 0.5;
-    return mapValue(static_cast<double>(y), 0.0, static_cast<double>(HEIGHT), view.centerY - halfH, view.centerY + halfH);
+static Precision screenToComplexY(int y, const ViewState& view) {
+    const Precision halfH = viewportHeight(view) * static_cast<Precision>(0.5);
+    return mapValue(static_cast<Precision>(y), static_cast<Precision>(0.0), static_cast<Precision>(HEIGHT), view.centerY - halfH, view.centerY + halfH);
 }
 
-static void applyCursorZoom(int mouseX, int mouseY, double factor, ViewState& view) {
-    const double beforeX = screenToComplexX(mouseX, view);
-    const double beforeY = screenToComplexY(mouseY, view);
+static void applyCursorZoom(int mouseX, int mouseY, Precision factor, ViewState& view) {
+    const Precision beforeX = screenToComplexX(mouseX, view);
+    const Precision beforeY = screenToComplexY(mouseY, view);
 
     view.zoom *= factor;
 
-    const double afterX = screenToComplexX(mouseX, view);
-    const double afterY = screenToComplexY(mouseY, view);
+    const Precision afterX = screenToComplexX(mouseX, view);
+    const Precision afterY = screenToComplexY(mouseY, view);
 
     view.centerX += beforeX - afterX;
     view.centerY += beforeY - afterY;
 }
 
-static int adaptiveIterations(double zoom, int manualOffset) {
-    const double logZoom = std::max(0.0, std::log10(zoom));
-    const int base = 120 + static_cast<int>(logZoom * 90.0);
+static int adaptiveIterations(Precision zoom, int manualOffset) {
+    const Precision logZoom = std::max(static_cast<Precision>(0.0), std::log10(zoom));
+    const int base = 120 + static_cast<int>(logZoom * static_cast<Precision>(90.0));
     return std::clamp(base + manualOffset, 50, 4000);
 }
 
@@ -77,22 +80,22 @@ static SDL_Color paletteColor(double t, PaletteMode palette) {
     return {static_cast<Uint8>(100 * (1 - t)), static_cast<Uint8>(180 * t), static_cast<Uint8>(255 * t), 255};
 }
 
-static double mandelbrotSmooth(double x0, double y0, int maxIterations) {
-    double x = 0.0;
-    double y = 0.0;
+static Precision mandelbrotSmooth(Precision x0, Precision y0, int maxIterations) {
+    Precision x = static_cast<Precision>(0.0);
+    Precision y = static_cast<Precision>(0.0);
     int iter = 0;
-    while (x * x + y * y <= 4.0 && iter < maxIterations) {
-        const double xt = x * x - y * y + x0;
-        y = 2.0 * x * y + y0;
+    while (x * x + y * y <= static_cast<Precision>(4.0) && iter < maxIterations) {
+        const Precision xt = x * x - y * y + x0;
+        y = static_cast<Precision>(2.0) * x * y + y0;
         x = xt;
         ++iter;
     }
     if (iter == maxIterations) {
-        return static_cast<double>(maxIterations);
+        return static_cast<Precision>(maxIterations);
     }
-    const double mag2 = x * x + y * y;
-    const double nu = iter + 1.0 - std::log2(std::log2(std::max(mag2, 1e-12)));
-    return std::clamp(nu, 0.0, static_cast<double>(maxIterations));
+    const Precision mag2 = x * x + y * y;
+    const Precision nu = static_cast<Precision>(iter) + static_cast<Precision>(1.0) - std::log2(std::log2(std::max(mag2, static_cast<Precision>(1e-12))));
+    return std::clamp(nu, static_cast<Precision>(0.0), static_cast<Precision>(maxIterations));
 }
 
 static const char* paletteName(PaletteMode p) {
@@ -186,13 +189,13 @@ int main(int argc, char* argv[]) {
             SDL_RenderClear(renderer);
             for (int py = 0; py < HEIGHT; ++py) {
                 for (int px = 0; px < WIDTH; ++px) {
-                    const double x0 = screenToComplexX(px, view);
-                    const double y0 = screenToComplexY(py, view);
-                    const double smoothIter = mandelbrotSmooth(x0, y0, maxIterations);
+                    const Precision x0 = screenToComplexX(px, view);
+                    const Precision y0 = screenToComplexY(py, view);
+                    const Precision smoothIter = mandelbrotSmooth(x0, y0, maxIterations);
                     if (smoothIter >= maxIterations) {
                         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
                     } else {
-                        const double t = smoothIter / maxIterations;
+                        const double t = static_cast<double>(smoothIter / static_cast<Precision>(maxIterations));
                         const SDL_Color c = paletteColor(t, palette);
                         SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 255);
                     }
@@ -210,13 +213,18 @@ int main(int argc, char* argv[]) {
 
             SDL_RenderPresent(renderer);
 
+            const bool doublePrecisionLimitNear = view.zoom >= DOUBLE_WARNING_ZOOM;
+
             std::ostringstream title;
             title << std::fixed << std::setprecision(6)
                   << "Mandelbrot | zoom=" << view.zoom
                   << " center=(" << view.centerX << "," << view.centerY << ")"
                   << " iter=" << maxIterations
-                  << " palette=" << paletteName(palette)
-                  << " | wheel zoom, drag/arrows pan, R reset, S shot, [ ] iter, C palette, Esc quit";
+                  << " palette=" << paletteName(palette);
+            if (doublePrecisionLimitNear) {
+                title << " WARNING: double precision limit near";
+            }
+            title << " | wheel zoom, drag/arrows pan, R reset, S shot, [ ] iter, C palette, Esc quit";
             SDL_SetWindowTitle(win, title.str().c_str());
             viewDirty = false;
         }

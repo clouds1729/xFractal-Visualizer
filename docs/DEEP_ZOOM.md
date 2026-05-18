@@ -20,7 +20,7 @@ Series approximation expands orbit behavior near the reference point (Taylor-lik
 
 1. **Stage 1: ViewState abstraction**
    - Keep center/zoom mapping in one class.
-   - Completed direction in current codebase (`ViewState`, mapping helpers).
+   - Completed direction in current codebase (`ViewState`, mapping helpers, and centralized `Precision` alias in `main.cpp`).
 2. **Stage 2: Adaptive iterations + smooth coloring**
    - Increase iterations with zoom and use fractional escape-time coloring.
    - Completed direction in current codebase.
@@ -48,7 +48,7 @@ Series approximation expands orbit behavior near the reference point (Taylor-lik
 - Cursor-anchored zoom invariant (complex coordinate under cursor remains stable).
 - Adaptive iteration monotonicity (more zoom => >= iterations).
 - Palette/color mapping value range [0,255].
-- Deep-zoom warning threshold logic (if/when kept in title/status formatter).
+- Deep-zoom warning threshold logic (currently shown in the window title once zoom reaches `1e12` with double precision).
 - View hash stability for tile-cache keys.
 
 ## Practical tradeoff summary
